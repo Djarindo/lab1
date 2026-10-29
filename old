@@ -1,0 +1,68 @@
+
+#include <avr/io.h>
+#define F_CPU 11059200UL
+#include <util/delay.h>
+#include <avr/interrupt.h>
+
+const uint8_t planeLeft[3][8] = {{0x00, 0x00, 0x18, 0x3C, 0x7E, 0xFF, 0xFF, 0xFF},
+								{0x00, 0x10, 0x38, 0x7c, 0xFE, 0xFF, 0xFF},
+								{0x00, 0x00, 0x0C, 0x1E, 0x3F, 0xFF, 0xFF}};
+	
+
+const uint8_t planeRight[3][8] = {{0x00, 0x00, 0x3C, 0x7E, 0xFF, 0xFF, 0xFF},
+							   {0x00, 0x00, 0x3C, 0x7E, 0xFF, 0xFF, 0xFF},
+							   {0x00, 0x00, 0x3C, 0x7E, 0xFF, 0xFF, 0xFF}};
+	
+uint8_t collumne = 0;
+uint8_t mask = 0xFF;
+uint16_t timer = 0;
+
+ISR(TIMER2_OVF_vect){ // once in 1 ms
+	TCNT2 = 83; //start position for counter
+	timer++;
+	if(timer >= 3000){
+		timer = 0;
+		mask ^= 0xFF;
+	}
+	PORTA = 0x00;
+	PORTC = 0x00;
+	
+	PORTD = (collumne << 4);
+	uint8_t img = plane[collumne] ^ mask;
+	if(collumne < 8){
+		PORTA = img;
+	}
+	else{
+		PORTC = img;
+	}
+	
+	collumne++;
+	if(collumne >= 16){
+		collumne = 0;
+	}
+}
+int main(void)
+{
+	//input config
+	DDRC = 0xFF;
+	DDRA = 0xFF;
+	DDRD = 0xF0;
+	
+	////clear screen
+	//PORTC = 0x00;
+	//PORTD = 0x00;
+	//PORTA = 0x00;
+	
+	
+	//timer counter block
+	TCNT2 = 83;
+	TCCR2 = (1 << CS21) | (1 << CS20);
+	TIMSK = (1 << TOIE2);
+	
+	sei();
+
+    while (1) 
+    {
+		
+    }
+}
