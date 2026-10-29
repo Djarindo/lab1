@@ -1,0 +1,73 @@
+#include <avr/io.h>
+#define F_CPU 11059200UL
+#include <util/delay.h>
+#include <avr/interrupt.h>
+
+const uint8_t imgLf[16] = {
+	0xFF, 0xFF, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xFF,
+	0x03, 0x03, 0x03, 0xFF, 0xFF, 0x03, 0x03, 0x03
+
+};
+
+const uint8_t imgR[16] = {
+	0xFF, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xFF, 0xFF,
+	0x03, 0x03, 0x03, 0xFF, 0xFF, 0x03, 0x03, 0x03
+};
+
+uint8_t collumne = 0;
+uint8_t mask = 0x00;
+uint16_t timer = 0;
+
+ISR(TIMER2_OVF_vect){
+	TCNT2 = 83; 
+	
+	timer++;
+	if(timer >= 500){
+		timer = 0;
+		mask ^= 0xFF;
+	}
+	
+	// lights off
+	PORTA = 0x00;
+	PORTC = 0x00;
+
+	// redirect half
+	PORTD = (collumne << 4);
+
+	uint8_t img_L = imgLf[collumne] ^ mask;
+	uint8_t img_R = imgR[collumne] ^ mask;
+
+	if(collumne < 8){
+		PORTA = img_L;
+		PORTC = img_R;
+	}
+	else{
+		PORTA = img_L;
+		PORTC = img_R;
+	}
+
+	collumne++;
+	if(collumne >= 16){
+		collumne = 0;
+	}
+}
+
+int main(void)
+{
+
+	DDRC = 0xFF;
+	DDRA = 0xFF;
+	DDRD = 0xF0;
+
+
+	TCNT2 = 83;
+	TCCR2 = (1 << CS21) | (1 << CS20);
+	TIMSK = (1 << TOIE2);
+
+	sei();
+
+	while (1)
+	{
+		
+	}
+}
