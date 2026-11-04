@@ -3,25 +3,31 @@
 #include <util/delay.h>
 #include <avr/interrupt.h>
 
-const uint8_t imgLf[16] = {
+// left side of matrix
+const uint8_t imgL[16] = {
 	0xFF, 0xFF, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xFF,
 	0x03, 0x03, 0x03, 0xFF, 0xFF, 0x03, 0x03, 0x03
 
 };
 
+// right side of matrix
 const uint8_t imgR[16] = {
 	0xFF, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xFF, 0xFF,
 	0x03, 0x03, 0x03, 0xFF, 0xFF, 0x03, 0x03, 0x03
 };
 
+// global
 uint8_t collumne = 0;
 uint8_t mask = 0x00;
 uint16_t timer = 0;
 
+// timer by overflow
 ISR(TIMER2_OVF_vect){
-	TCNT2 = 83; 
+	TCNT2 = 83; // new start position
 	
 	timer++;
+
+	// time to change the mask
 	if(timer >= 500){
 		timer = 0;
 		mask ^= 0xFF;
@@ -34,7 +40,7 @@ ISR(TIMER2_OVF_vect){
 	// redirect half
 	PORTD = (collumne << 4);
 
-	uint8_t img_L = imgLf[collumne] ^ mask;
+	uint8_t img_L = imgL[collumne] ^ mask;
 	uint8_t img_R = imgR[collumne] ^ mask;
 
 	if(collumne < 8){
@@ -52,6 +58,7 @@ ISR(TIMER2_OVF_vect){
 	}
 }
 
+
 int main(void)
 {
 
@@ -59,15 +66,14 @@ int main(void)
 	DDRA = 0xFF;
 	DDRD = 0xF0;
 
+	//timer config (pick the 2nd timer for work with 8 bits)
+	TCNT2 = 83; 		//start position
+	TCCR2 = (1 << CS21) | (1 << CS20); 		//relocate the "1" to position << "" 
+	TIMSK = (1 << TOIE2); 		//
 
-	TCNT2 = 83;
-	TCCR2 = (1 << CS21) | (1 << CS20);
-	TIMSK = (1 << TOIE2);
-
+//permition for isr
 	sei();
-
 	while (1)
-	{
-		
+	{	
 	}
 }
