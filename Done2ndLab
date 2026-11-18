@@ -1,0 +1,94 @@
+#include <avr/io.h>
+#define F_CPU 11059200UL
+#include <util/delay.h>
+#include <avr/interrupt.h>
+
+// первым делом надо выбрать таймер с которым будет выполняться эта лаба.
+// я выбрал частоту мерцания экрана в 60 Гц
+// надо выполнить расчёт:
+// раз 60 гц, значит период равен 0,0166666666666 секунд, что равно 16,6667 мс
+// сам таймер работае в зависимости от частоты контроллера F_CPU 11059200UL
+//
+
+
+// так как матрица делится на две половины, на 8 столбцов и 16 строк, но внутри эта половина делится на два квадратика 8 на 8.
+// поэтому напишем два массива: левый и правый
+
+// left side of matrix
+const uint8_t imgL[16] = {
+	0xFF, 0xFF, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xFF,
+	0x03, 0x03, 0x03, 0xFF, 0xFF, 0x03, 0x03, 0x03
+
+};
+
+// right side of matrix
+const uint8_t imgR[16] = {
+	0xFF, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xFF, 0xFF,
+	0x03, 0x03, 0x03, 0xFF, 0xFF, 0x03, 0x03, 0x03
+};
+
+// введём глобальные переменные, тк нам нужны переменные которые будут сохранять данные всегда
+// global
+uint8_t collumne = 0;	// для запоминания текущей колонки
+uint8_t mask = 0x00;	// маска для инверсии изображения
+uint16_t timer = 0;		// счётчик времени
+
+// напишем стандартную функцию прерывания по переполнению внутреннего счётчика контроллера
+// timer by overflow
+ISR(TIMER2_OVF_vect){
+	TCNT2 = 83; // new start position
+// установили новое стартовое значение для последующего отсчёта (т.е. заново запущенный счётчик будет стартовать не с 0, а с 83)
+// это значение получено из расчёта мигания картинки 60 раз в секунду
+	
+	timer++;	// добавим 1 к нашему счётчику прерываний, так как нам надо получить конкретное число 
+
+	// time to change the mask
+	if(timer >= 500){
+		timer = 0;
+		mask ^= 0xFF;
+	}
+	
+	// lights off (очистим вывод от всего.)
+	PORTA = 0x00;
+	PORTC = 0x00;
+
+	// redirect half
+	PORTD = (collumne << 4);
+
+	uint8_t img_L = imgL[collumne] ^ mask; // сделаем 
+	uint8_t img_R = imgR[collumne] ^ mask;
+
+	if(collumne < 8){
+		PORTA = img_L;
+		PORTC = img_R;
+	}
+	else{
+		PORTA = img_L;
+		PORTC = img_R;
+	}
+
+	collumne++;
+	if(collumne >= 16){
+		collumne = 0;
+	}
+}
+
+
+int main(void)
+{
+
+	DDRC = 0xFF;
+	DDRA = 0xFF;
+	DDRD = 0xF0;
+
+	//timer config (pick the 2nd timer for work with 8 bits)
+	TCNT2 = 83; 		//start position
+	TCCR2 = (1 << CS21) | (1 << CS20); 		//relocate the "1" to position << "" 
+	TIMSK = (1 << TOIE2); 		//
+
+//permition for isr
+	sei();
+	while (1)
+	{	
+	}
+}
