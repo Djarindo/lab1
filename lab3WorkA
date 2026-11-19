@@ -1,0 +1,101 @@
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+#include <stdlib.h>
+
+uint16_t ms_counter = 0;
+uint16_t seconds = 0;
+uint8_t btn_flag = 0;
+
+void uartInit(uint32_t baud) {
+    uint16_t ubrr = (F_CPU / (16 * baud)) - 1;
+    
+    UBRR0H = (uint8_t)(ubrr >> 8);
+    UBRR0L = (uint8_t)ubrr;
+    
+    UCSR0B = (1 << RXEN0) | (1 << TXEN0);
+    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
+}
+
+void uartTransmitByte(char byte) {
+    while (!(UCSR0A & (1 << UDRE0)));
+    UDR0 = byte;
+}
+
+void uartTransmitString(const char* str) {
+    while (*str != '\0') {
+        uartTransmitByte(*str++);
+    }
+}
+
+void uartTransmitNumber(int16_t num) {
+    char buffer[7];
+    itoa(num, buffer, 10);
+    uartTransmitString(buffer);
+}
+
+ISR(TIMER2_OVF_vect) {
+    TCNT2 = 83; 
+    
+    ms_counter++;
+    if (ms_counter >= 1000) {
+        ms_counter = 0;
+        seconds++;
+    }
+}
+
+void timer2Init(void) {
+    TCNT2 = 83;
+    TCCR2 = (1 << CS21) | (1 << CS20);
+    TIMSK |= (1 << TOIE2);
+}
+
+ISR(INT0_vect) {
+    btn_flag = 1;
+}
+
+void extInterruptInit(void) {
+    DDRD &= ~(1 << PD0);
+    PORTD |= (1 << PD0);
+    
+    EICRA |= (1 << ISC01);
+    EICRA &= ~(1 << ISC00);
+    
+    EIFR |= (1 << INTF0);
+    EIMSK |= (1 << INT0);
+}
+
+int main(void) {
+    uartInit(19200);
+    timer2Init();
+    extInterruptInit();
+    
+    sei();
+    
+    uint16_t press_count = 0;
+    uartTransmitString("Stand ATmega128A Ready! Press button...\r\n");
+
+    while(1) {
+        uartTransmitString("a\n");
+    }
+
+    while (1) {
+        if (btn_flag) {
+            _delay_ms(40);
+            
+            if (!(PIND & (1 << PD0))) {
+                press_count++;
+                
+                uartTransmitString("Triggered! Count: ");
+                uartTransmitNumber(press_count);
+                uartTransmitString(" | Uptime: ");
+                uartTransmitNumber(seconds);
+                uartTransmitString(" sec\r\n");
+                
+                while (!(PIND & (1 << PD0))); 
+            }
+            
+            btn_flag = 0;
+        }
+    }
+}
