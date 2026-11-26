@@ -1,0 +1,428 @@
+
+#define F_CPU 11059200UL
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+#include <stdlib.h>
+#include <stdint.h>
+
+// ==========================================
+// ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
+// ==========================================
+
+volatile uint16_t ms_counter = 0;
+
+volatile uint8_t step_flag = 0;
+volatile uint8_t btn_flag = 0;
+
+volatile uint8_t display_digits[5] = {
+    10, 10, 1, 0, 0
+};
+
+volatile uint8_t scan_position = 0;
+
+
+// ==========================================
+// ТАБЛИЦА СЕМИСЕГМЕНТНЫХ ИНДИКАТОРОВ
+// ==========================================
+
+#define CLEAR_SEG 10
+
+const uint8_t symbols[12] = {
+    0x3F, // 0
+    0x06, // 1
+    0x5B, // 2
+    0x4F, // 3
+    0x66, // 4
+    0x6D, // 5
+    0x7D, // 6
+    0x07, // 7
+    0x7F, // 8
+    0x6F, // 9
+    0x00, // Пустой индикатор
+    0x40  // Минус
+};
+
+
+// ==========================================
+// UART
+// ==========================================
+
+void uartInit(uint32_t baud)
+{
+    uint16_t ubrr = (F_CPU / (16UL * baud)) - 1;
+
+    UBRR0H = (uint8_t)(ubrr >> 8);
+    UBRR0L = (uint8_t)ubrr;
+
+    UCSR0B = (1 << RXEN0) | (1 << TXEN0);
+
+    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
+}
+
+
+void uartTransmitByte(char data)
+{
+    while (!(UCSR0A & (1 << UDRE0)));
+
+    UDR0 = data;
+}
+
+
+void uartTransmitString(const char *str)
+{
+    while (*str != '\0')
+    {
+        uartTransmitByte(*str++);
+    }
+}
+
+
+void uartTransmitNumber(int16_t number)
+{
+    char buffer[7];
+
+    itoa(number, buffer, 10);
+
+    uartTransmitString(buffer);
+}
+
+
+// ==========================================
+// ИНИЦИАЛИЗАЦИЯ СЕМИСЕГМЕНТНИКОВ
+// ==========================================
+
+void sevensegment(void)
+{
+    // PA1-PA5: выбор индикаторов
+    DDRA |= (1 << PA1) |
+            (1 << PA2) |
+            (1 << PA3) |
+            (1 << PA4) |
+            (1 << PA5);
+
+    // PORTC: управление сегментами
+    DDRC = 0xFF;
+
+    // Все индикаторы выключены
+    PORTA &= ~(
+        (1 << PA1) |
+        (1 << PA2) |
+        (1 << PA3) |
+        (1 << PA4) |
+        (1 << PA5)
+    );
+
+    PORTC = 0x00;
+}
+
+
+// ==========================================
+// ФУНКЦИЯ ПЕРЕДАЧИ ЧИСЛА НА ИНДИКАТОРЫ
+// ==========================================
+
+void shownumber(uint16_t value)
+{
+    uint8_t digits[5];
+
+    // Разделение числа на отдельные цифры
+
+    digits[0] = (value / 10000) % 10;
+    digits[1] = (value / 1000) % 10;
+    digits[2] = (value / 100) % 10;
+    digits[3] = (value / 10) % 10;
+    digits[4] = value % 10;
+
+    // Убираем незначащие нули
+
+    uint8_t leading_zero = 1;
+
+    uint8_t sreg = SREG;
+    cli();
+
+    for (uint8_t i = 0; i < 5; i++)
+    {
+        if (leading_zero && digits[i] == 0 && i < 4)
+        {
+            display_digits[i] = CLEAR_SEG;
+        }
+        else
+        {
+            leading_zero = 0;
+            display_digits[i] = digits[i];
+        }
+    }
+
+    SREG = sreg;
+}
+
+
+// ==========================================
+// TIMER2: ДИНАМИЧЕСКАЯ ИНДИКАЦИЯ + 1 СЕКУНДА
+// ==========================================
+
+ISR(TIMER2_COMP_vect)
+{
+    // Выключаем все пять индикаторов
+
+    PORTA &= ~(
+        (1 << PA1) |
+        (1 << PA2) |
+        (1 << PA3) |
+        (1 << PA4) |
+        (1 << PA5)
+    );
+
+    // Выбираем цифру для текущего разряда
+
+    PORTC = symbols[display_digits[scan_position]];
+
+    // Включаем необходимый разряд
+
+    PORTA |= (1 << (PA1 + scan_position));
+
+    // Переходим к следующему индикатору
+
+    scan_position++;
+
+    if (scan_position >= 5)
+    {
+        scan_position = 0;
+    }
+
+    // Считаем миллисекунды
+
+    ms_counter++;
+
+    if (ms_counter >= 1000)
+    {
+        ms_counter = 0;
+
+        step_flag = 1;
+    }
+}
+
+
+// ==========================================
+// ИНИЦИАЛИЗАЦИЯ TIMER2
+// ==========================================
+
+void timer2Init(void)
+{
+    // Отключаем асинхронный режим Timer2
+    ASSR &= ~(1 << AS2);
+
+    // Останавливаем таймер
+    TCCR2 = 0;
+
+    // Значение сравнения
+    OCR2 = 172;
+
+    // Начальное значение счётчика
+    TCNT2 = 0;
+
+    // Сбрасываем флаг сравнения
+    TIFR = (1 << OCF2);
+
+    // Разрешаем прерывание Compare Match
+    TIMSK |= (1 << OCIE2);
+
+    // CTC mode, предделитель 64
+    TCCR2 = (1 << WGM21) |
+            (1 << CS22);
+}
+
+
+// ==========================================
+// ВНЕШНИЕ ПРЕРЫВАНИЯ
+// ==========================================
+
+ISR(INT0_vect)
+{
+    btn_flag |= (1 << 0);
+}
+
+
+ISR(INT1_vect)
+{
+    btn_flag |= (1 << 1);
+}
+
+
+ISR(INT4_vect)
+{
+    btn_flag |= (1 << 2);
+}
+
+
+// ==========================================
+// ИНИЦИАЛИЗАЦИЯ КНОПОК
+// ==========================================
+
+void extInterruptInit(void)
+{
+    // PD0 и PD1 как входы
+
+    DDRD &= ~((1 << PD0) | (1 << PD1));
+
+    // Подтягивающие резисторы
+
+    PORTD |= (1 << PD0) | (1 << PD1);
+
+
+    // PE4 как вход
+
+    DDRE &= ~(1 << PE4);
+
+    PORTE |= (1 << PE4);
+
+
+    // Сброс настроек ISC
+
+    EICRA &= ~(
+        (1 << ISC01) | (1 << ISC00) |
+        (1 << ISC11) | (1 << ISC10)
+    );
+
+    EICRB &= ~(
+        (1 << ISC41) | (1 << ISC40)
+    );
+
+
+    // Спадающий фронт INT0, INT1, INT4
+
+    EICRA |= (1 << ISC01) | (1 << ISC11);
+
+    EICRB |= (1 << ISC41);
+
+
+    // Сброс ожидающих флагов
+
+    EIFR = (1 << INTF0) |
+           (1 << INTF1) |
+           (1 << INTF4);
+
+
+    // Разрешение прерываний
+
+    EIMSK |= (1 << INT0) |
+             (1 << INT1) |
+             (1 << INT4);
+}
+
+
+// ==========================================
+// MAIN
+// ==========================================
+
+int main(void)
+{
+    int16_t progression_val = 100;
+
+    // Инициализация периферии
+
+    sevensegment();
+
+    uartInit(19200);
+
+    timer2Init();
+
+    extInterruptInit();
+
+    // Начальное отображение
+
+    shownumber(progression_val);
+
+    sei();
+
+    uartTransmitString(
+        "Start progression (100 to 600, step 20):\r\n"
+    );
+
+    // ======================================
+
+    while (1)
+    {
+        uint8_t local_step;
+        uint8_t local_button;
+
+        // Атомарное чтение флагов
+
+        uint8_t sreg = SREG;
+
+        cli();
+
+        local_step = step_flag;
+        step_flag = 0;
+
+        local_button = btn_flag;
+        btn_flag = 0;
+
+        SREG = sreg;
+
+
+        // ==================================
+        // ОБРАБОТКА КНОПОК
+        // ==================================
+
+        if (local_button != 0)
+        {
+            // Небольшая задержка для подавления дребезга
+
+            _delay_ms(40);
+
+            // Сброс прогрессии
+
+            progression_val = 100;
+
+            shownumber(progression_val);
+
+            uartTransmitString("Button pressed: INT");
+
+            if (local_button & (1 << 0))
+            {
+                uartTransmitString("0 ");
+            }
+
+            if (local_button & (1 << 1))
+            {
+                uartTransmitString("1 ");
+            }
+
+            if (local_button & (1 << 2))
+            {
+                uartTransmitString("4 ");
+            }
+
+            uartTransmitString(
+                "Reset to 100.\r\n"
+            );
+        }
+
+
+        // ==================================
+        // ОБРАБОТКА СЕКУНДНОГО ИНТЕРВАЛА
+        // ==================================
+
+        else if (local_step)
+        {
+            progression_val += 20;
+
+            if (progression_val > 600)
+            {
+                progression_val = 100;
+            }
+
+            // Отображение числа на пяти индикаторах
+
+            shownumber(progression_val);
+
+            // Вывод числа через UART
+
+            uartTransmitNumber(progression_val);
+
+            uartTransmitString("\r\n");
+        }
+    }
+}
